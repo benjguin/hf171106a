@@ -17,6 +17,8 @@ namespace SampleApi.Controllers
         private const string AuthorityUri = "https://login.microsoftonline.com/";
         private const string BatchResourceUri = "https://batch.core.windows.net/";
 
+        public object Windows { get; private set; }
+
         // this method could be moved to another class like a security helper
         public static async Task<string> GetAuthenticationTokenAsync()
         {
@@ -89,5 +91,27 @@ namespace SampleApi.Controllers
 
             return sb.ToString();
         }
+
+        // GET api/Sample/test-access
+        [Route("exec-context")]
+        [HttpGet]
+        public string GetExecutionContext()
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("Start Test");
+
+            try
+            {
+                sb.AppendLine($"User.Identity.Name={User.Identity.Name}");
+                sb.AppendLine($"Current Process Id={System.Diagnostics.Process.GetCurrentProcess().Id}");
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine($"Exception: {ex}");
+            }
+
+            return sb.ToString();
+        }
+
     }
 }
