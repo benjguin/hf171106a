@@ -2,6 +2,10 @@
 using Microsoft.Azure.Batch.Auth;
 using Microsoft.Azure.Batch.Common;
 using Microsoft.IdentityModel.Clients.ActiveDirectory;
+using Microsoft.WindowsAzure.Storage;
+using Microsoft.WindowsAzure.Storage.Auth;
+using Microsoft.Azure.Batch.Conventions.Files;
+using Microsoft.WindowsAzure.Storage.Blob;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,16 +18,18 @@ namespace xgridbatch
 
         private const string AuthorityUri = "https://login.microsoftonline.com/";
         private const string BatchResourceUri = "https://batch.core.windows.net/";
-        private const string BatchAccountUrl = "https://###obfuscated###.northeurope.batch.azure.com";
+        private const string BatchAccountUrl = "https://###yourbatchaccount###.yourregion.batch.azure.com";
 
         private const bool ShouldDeleteJob = false;
 
         // AppId or ClientId
-        private const string ClientId = "<yourid>";
+        private const string ClientId = "<clientid>";
         // AppKey, AppSecret or ClientKey
-        private const string ClientKey = "<yourkey>";
-        private const string TenantId = "<yourtenant>";
-        
+        private const string ClientKey = "<clientkey>";
+        private const string TenantId = "<tenantid>";
+
+        // SAS key for app storage
+        private const string appStoreSASKey = "<storage account sas key with container and object RW access>";
 
         static void Main(string[] args)
         {
@@ -68,6 +74,8 @@ namespace xgridbatch
         public static async Task PerformBatchOperations()
         {
             Func<Task<string>> tokenProvider = () => GetAuthenticationTokenAsync();
+            //            StorageCredentials storageCred = new StorageCredentials(appStoreSASKey);
+            CloudStorageAccount storageAccount = CloudStorageAccount.Parse(appStoreSASKey);
 
             using (var client = await BatchClient.OpenAsync(new BatchTokenCredentials(BatchAccountUrl, tokenProvider)))
             {
@@ -85,7 +93,7 @@ namespace xgridbatch
                         PoolTargetNodeCount = 2,
                         PoolNodeVirtualMachineSize = "Standard_D2_V2",
                         MaxTasksPerNode = 2,
-                        subnetId = "/subscriptions/###obfuscated###/resourceGroups/###obfuscated###-Batch-RG/providers/Microsoft.Network/virtualNetworks/myvnet/subnets/default"
+                        subnetId = "<your subnet resource id>"
                     };
 
                     CloudPool pool = await CreateVMPoolIfNotExistAsync(client, poolId, poolSettings);
@@ -93,8 +101,23 @@ namespace xgridbatch
                     // Create a CloudJob, or obtain an existing pool with the specified ID
                     CloudJob job = await CreateJobIfNotExistAsync(client, poolId, jobId);
 
+                    // Get the container URL to use
+                    string containerName = job.OutputStorageContainerName();
+                    CloudBlobContainer container = storageAccount.CreateCloudBlobClient().GetContainerReference(containerName);
+                    await container.CreateIfNotExistsAsync();
+
+                    // build the container SAS URL, job.GetOutputStorageContainerUrl(storageAccount) create a SAS key but for this 
+                    // you need the account key whihc is not avaialbe here
+
+                    string containerUrl = $"{storageAccount.BlobEndpoint}{containerName}?{storageAccount.Credentials.SASToken}";
+
+
                     // create a simple task. Each task within a job must have a unique ID
-                    await client.JobOperations.AddTaskAsync(jobId, new CloudTask(Guid.NewGuid().ToString(), "cmd /c echo Hello world from the Batch Hello world sample!"));
+                    var task = new CloudTask(Guid.NewGuid().ToString(), "cmd /c echo Hello world from the Batch Hello world sample!");
+
+                    task.WithOutputFile(@"..\std*.txt", containerUrl, TaskOutputKind.TaskLog, OutputFileUploadCondition.TaskCompletion);
+
+                    await client.JobOperations.AddTaskAsync(jobId, task);
 
                     // Wait for the job to complete
                     await WaitForJobAndPrintOutputAsync(client, jobId);
